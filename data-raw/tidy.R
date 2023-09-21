@@ -1,7 +1,7 @@
 arquivos_csv <- list.files(
   "data-raw/anac_files/",
   full.names = TRUE,
-  pattern = "csv$"
+  pattern = "2019|2020|2021|2022|2023"
 )
 
 renomear_colunas <- function(x) {
@@ -41,10 +41,10 @@ ler_tabelas <- function(path) {
       locale = readr::locale(encoding = "latin1")
     )
   }
-  tab |>
+  tab <- tab |>
     janitor::clean_names() |>
     janitor::remove_empty(which = c("rows", "cols")) |>
-    dplyr::select(-dplyr::any_of("x1")) |>
+    dplyr::select(-dplyr::any_of(c("di_group", "x1"))) |>
     dplyr::rename_with(
       .fn = renomear_colunas
     ) |>
@@ -54,30 +54,40 @@ ler_tabelas <- function(path) {
         as.character
       )
     )
+
+  # These columns are inverted for some tables
+  if (nchar(tab$destination_airport[1]) > 4) {
+    aux <- tab$destination_airport
+    tab$destination_airport <- tab$actual_departure_date
+    tab$actual_departure_date <- aux
+  }
+
+  return(tab)
 }
 
 dados <- purrr::map(arquivos_csv, ler_tabelas) |>
   dplyr::bind_rows() |>
   dplyr::mutate(
     flight_status = tolower(flight_status),
-    flight_status2 = dplyr::case_when(
+    flight_status = dplyr::case_when(
       stringr::str_detect(flight_status, "informado") ~ "not informed",
       stringr::str_detect(flight_status, "n.*realizado") ~ "not carried out",
       flight_status == "realizado" ~ "carried out",
       flight_status == "cancelado" ~ "canceled",
       TRUE ~ NA_character_
     ),
-    airline = ifelse(nchar(airline) != 3, NA_character_, airline)
+    airline = ifelse(nchar(airline) != 3, NA_character_, airline),
+    number_of_seats = as.numeric(number_of_seats),
+    dplyr::across(
+      dplyr::ends_with("date"),
+      ~ ifelse(
+        stringr::str_detect(tolower(.x), "informado"),
+        NA_character_,
+        .x
+      )
+    )
   )
 
-dados |>
-  # dplyr::mutate(
-  #   airline = ifelse(
-  #     nchar(airline) != 3 | airline == "-->",
-  #     NA_character_,
-  #     airline
-  #   )
-  # ) |>
-  dplyr::pull(planned_departure_date) |>
-  unique()
+dplyr::glimpse(dados)
 
+saveRDS(dados, "data-raw/brflights.rds")
